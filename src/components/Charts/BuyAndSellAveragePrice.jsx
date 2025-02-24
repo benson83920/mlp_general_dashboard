@@ -240,14 +240,19 @@ export default function BuyAndSellAveragePrice(props) {
                 const buySeriesData = param.seriesData.get(buyLineSeries);
                 const sellSeriesData = param.seriesData.get(sellLineSeries);
 
-                const priceInfo =
-                    buySeriesData && sellSeriesData
-                        ? `<div style="color:#26a69a">買入均價＝${buySeriesData.value.toFixed(
-                              4
-                          )}</div> <div style="color:#ef5350">賣出均價＝${sellSeriesData.value.toFixed(
-                              4
-                          )}</div>`
-                        : "";
+                let priceInfo = "";
+
+                if (buySeriesData) {
+                    priceInfo += `<div style="color:#26a69a">買入均價＝${buySeriesData.value.toFixed(
+                        5
+                    )}</div>`;
+                }
+
+                if (sellSeriesData) {
+                    priceInfo += `<div style="color:#ef5350">賣出均價＝${sellSeriesData.value.toFixed(
+                        5
+                    )}</div>`;
+                }
 
                 firstRow.innerHTML = priceInfo;
             } else {
