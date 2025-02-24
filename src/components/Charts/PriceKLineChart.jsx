@@ -7,6 +7,12 @@ import {
     HistogramSeries,
 } from "lightweight-charts";
 import axios from "axios";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 export default function PriceKLineChart(props) {
     const { timeScale } = props; // 例如 "1m", "5m" 等
@@ -14,10 +20,12 @@ export default function PriceKLineChart(props) {
     const [chart, setChart] = useState(null);
     const [series, setSeries] = useState(null);
     const [volumeSeries, setVolumeSeries] = useState(null);
+    const [mlpDiffHistogramSeries, setMLPDiffHistogramSeries] = useState(null);
     // 儲存歷史資料與更新後的所有資料
     const [chartData, setChartData] = useState([]);
     // 儲存 WS 回傳的當前時間區間資料
     const [lastIntervalData, setLastIntervalData] = useState([]);
+    const [mlpDiffData, setMLPDiffData] = useState([]);
 
     // 轉換 WS 回傳資料格式
     const transformWSData = (data) => ({
@@ -28,6 +36,30 @@ export default function PriceKLineChart(props) {
         close: parseFloat(data.c),
         value: isNaN(parseFloat(data.v)) ? 0 : parseFloat(data.v),
     });
+
+    useEffect(() => {
+        const fetchHistoricalMLPDiffData = async () => {
+            try {
+                const url = "/api/getHistoricalMLPDiffData";
+                const response = await axios.get(url);
+                let data = response.data.data;
+
+                data = data.map((item) => ({
+                    ...item,
+                    timestamp: dayjs
+                        .tz(item.timestamp, "America/Toronto") // 原本是多倫多時間
+                        .tz("Asia/Taipei") // 轉換成台北時間
+                        .format("YYYY-MM-DD HH:mm:ss"),
+                }));
+
+                setMLPDiffData(data);
+            } catch (error) {
+                console.error("取得 MLP Diff Data 失敗:", error);
+            }
+        };
+
+        fetchHistoricalMLPDiffData();
+    }, []);
 
     // 透過 REST API 取得歷史 K 線資料
     useEffect(() => {
@@ -75,9 +107,7 @@ export default function PriceKLineChart(props) {
                     message.event === "update" &&
                     message.result
                 ) {
-                    // 轉換 WS 資料格式
                     const wsData = transformWSData(message.result);
-                    // 模仿方式：根據目前區間更新 lastIntervalData
                     updateLastIntervalData(wsData);
                 }
             });
@@ -102,18 +132,14 @@ export default function PriceKLineChart(props) {
     // 根據 timeScale 更新當前區間的資料
     const updateLastIntervalData = (newData) => {
         setLastIntervalData((prevData) => {
-            // 假設 timeScale 為 "1m", "5m" 等，先取得數字部分 (分鐘)
             const timeScaleInSeconds = parseInt(timeScale) * 60;
             const currentTime = Math.floor(Date.now() / 1000);
             const currentIntervalStart =
                 Math.floor(currentTime / timeScaleInSeconds) *
                 timeScaleInSeconds;
-
-            // 過濾出屬於當前區間的資料
             const filteredPrev = prevData.filter(
                 (item) => item.time >= currentIntervalStart
             );
-            // 新資料加入後仍需過濾屬於當前區間的資料
             const updated = [...filteredPrev, newData].filter(
                 (item) => item.time >= currentIntervalStart
             );
@@ -125,23 +151,16 @@ export default function PriceKLineChart(props) {
     // 根據 lastIntervalData 更新 chartData（若有當前區間資料則更新，否則新增新的 candle）
     useEffect(() => {
         if (!series || !volumeSeries || lastIntervalData.length === 0) return;
-
-        // 計算當前區間起始時間
         const timeScaleInSeconds = parseInt(timeScale) * 60;
         const currentIntervalStart =
             Math.floor(Date.now() / 1000 / timeScaleInSeconds) *
             timeScaleInSeconds;
-
-        // 取當前區間最新的一筆資料
         const latestData = lastIntervalData[lastIntervalData.length - 1];
-
-        // 更新 chartData：檢查最後一筆是否屬於當前區間
         setChartData((prevChartData) => {
             let updatedChartData = [...prevChartData];
             const lastCandle = updatedChartData[updatedChartData.length - 1];
 
             if (lastCandle && lastCandle.time === currentIntervalStart) {
-                // 更新現有的 candle（您可以根據實際需求調整更新邏輯）
                 const updatedCandle = {
                     ...lastCandle,
                     open: latestData.open,
@@ -152,7 +171,6 @@ export default function PriceKLineChart(props) {
                 };
                 updatedChartData[updatedChartData.length - 1] = updatedCandle;
             } else {
-                // 新增新的 candle
                 updatedChartData.push({
                     time: currentIntervalStart,
                     open: latestData.open,
@@ -166,7 +184,7 @@ export default function PriceKLineChart(props) {
         });
     }, [lastIntervalData, series, volumeSeries, timeScale]);
 
-    // 建立圖表及系列
+    // 建立圖表及各系列
     useEffect(() => {
         if (!chartContainerRef.current) return;
 
@@ -222,6 +240,7 @@ export default function PriceKLineChart(props) {
             },
         });
 
+        // candlestickSeries：上部 70%
         const candlestickSeries = chartInstance.addSeries(CandlestickSeries, {
             upColor: "#26a69a",
             downColor: "#ef5350",
@@ -230,16 +249,31 @@ export default function PriceKLineChart(props) {
             wickDownColor: "#ef5350",
             priceFormat: { type: "price", precision: 5, minMove: 0.00001 },
         });
+        // 透過設定 bottom margin 為 0.3，使 K 線圖繪圖區佔 70%
         candlestickSeries.priceScale().applyOptions({
-            scaleMargins: { top: 0, bottom: 0.1 },
+            scaleMargins: { top: 0, bottom: 0.3 },
         });
         setSeries(candlestickSeries);
 
-        const volumeHistogramSeries = chartInstance.addSeries(HistogramSeries, {
+        // mlpDiffHistogramSeries：中間 20%
+        // 使用自定義價格刻度 id "mlpDiff"
+        const mlpDiffSeries = chartInstance.addSeries(HistogramSeries, {
             color: "#26a69a",
             priceFormat: { type: "volume" },
-            priceScaleId: "",
-            scaleMargins: { top: 0.9, bottom: 0 },
+            priceScaleId: "mlpDiff",
+        });
+        // 設定 mlpDiff 繪圖區：上方留 70%，下方留 10%（繪圖區 20%）
+        chartInstance.priceScale("mlpDiff").applyOptions({
+            scaleMargins: { top: 0.7, bottom: 0.1 },
+        });
+        setMLPDiffHistogramSeries(mlpDiffSeries);
+
+        // volumeHistogramSeries：底部 10%
+        // 使用自定義價格刻度 id "volume"
+        const volumeHistSeries = chartInstance.addSeries(HistogramSeries, {
+            color: "#26a69a",
+            priceFormat: { type: "volume" },
+            priceScaleId: "volume",
             crossHairMarker: {
                 color: "#00f",
                 borderWidth: 1,
@@ -248,26 +282,27 @@ export default function PriceKLineChart(props) {
                 textColor: "#fff",
             },
         });
-        volumeHistogramSeries.priceScale().applyOptions({
-            scaleMargins: { top: 0.8, bottom: 0 },
+        // 設定 volume 繪圖區：上方留 90%，下方 0（繪圖區 10%）
+        chartInstance.priceScale("volume").applyOptions({
+            scaleMargins: { top: 0.9, bottom: 0 },
         });
-        setVolumeSeries(volumeHistogramSeries);
+        setVolumeSeries(volumeHistSeries);
 
+        // 建立 legend 顯示資料
         const container = chartContainerRef.current;
         const legend = document.createElement("div");
         legend.style = `
-          position: absolute;
-          left: 12px;
-          top: 12px;
-          z-index: 1;
-          font-size: 14px;
-          font-family: sans-serif;
-          line-height: 18px;
-          font-weight: 300;
-          color: white;
+            position: absolute;
+            left: 12px;
+            top: 12px;
+            z-index: 1;
+            font-size: 14px;
+            font-family: sans-serif;
+            line-height: 18px;
+            font-weight: 300;
+            color: white;
         `;
         container.appendChild(legend);
-
         const firstRow = document.createElement("div");
         firstRow.style.color = "white";
         legend.appendChild(firstRow);
@@ -275,11 +310,28 @@ export default function PriceKLineChart(props) {
         chartInstance.subscribeCrosshairMove((param) => {
             if (param.seriesData) {
                 const candleData = param.seriesData.get(candlestickSeries);
-                const volumeData = param.seriesData.get(volumeHistogramSeries);
-                const priceInfo =
+                const volumeData = param.seriesData.get(volumeHistSeries);
+                const mlpDiffData = param.seriesData.get(mlpDiffSeries);
+
+                let priceInfo =
                     candleData && volumeData
                         ? `MLP_USDT ${timeScale} 開=${candleData.open} 高=${candleData.high} 低=${candleData.low} 收=${candleData.close} 成交量=${volumeData.value}`
                         : "";
+
+                // MLP Diff 資訊
+                if (mlpDiffData) {
+                    const diff = mlpDiffData.value;
+                    if (diff >= 0) {
+                        priceInfo += ` <span style="color: #26a69a;">MLP流入 ${diff.toFixed(
+                            2
+                        )}</span>`;
+                    } else {
+                        priceInfo += ` <span style="color: #ef5350;">MLP流出 ${diff.toFixed(
+                            2
+                        )}</span>`;
+                    }
+                }
+
                 firstRow.innerHTML = priceInfo;
             } else {
                 firstRow.innerHTML = "";
@@ -291,15 +343,32 @@ export default function PriceKLineChart(props) {
         };
     }, [timeScale]);
 
+    // 更新 mlpDiff 資料
+    useEffect(() => {
+        if (!chart || !mlpDiffHistogramSeries || mlpDiffData.length === 0)
+            return;
+        const formattedMLPDiffData = mlpDiffData
+            .map((item) => {
+                const timeInSeconds = Math.floor(
+                    new Date(item.timestamp).getTime() / 1000
+                );
+                const diff = parseFloat(item.tokenAmountDiff);
+                return {
+                    time: timeInSeconds,
+                    value: diff,
+                    color: diff >= 0 ? "#26a69a" : "#ef5350",
+                };
+            })
+            .sort((a, b) => a.time - b.time);
+        mlpDiffHistogramSeries.setData(formattedMLPDiffData);
+    }, [chart, mlpDiffHistogramSeries, mlpDiffData]);
+
+    // 更新 candlestick 與 volume 資料
     useEffect(() => {
         if (!series || !volumeSeries || chartData.length === 0) return;
-
-        // 格式化資料，支援歷史資料與 WS 傳回的陣列格式
         const formatData = (data) =>
             data.map((d) => {
-                if (typeof d === "object" && d.time !== undefined) {
-                    return d;
-                }
+                if (typeof d === "object" && d.time !== undefined) return d;
                 return {
                     time: parseInt(d[0]),
                     open: parseFloat(d[5]),
@@ -309,15 +378,11 @@ export default function PriceKLineChart(props) {
                     value: isNaN(parseFloat(d[1])) ? 0 : parseFloat(d[1]),
                 };
             });
-
         const formattedData = formatData(chartData);
-        // 為成交量圖表資料新增 color 屬性
         const volumeData = formattedData.map((d) => ({
             ...d,
             color: d.close >= d.open ? "#26a69a" : "#ef5350",
         }));
-
-        // 若資料筆數大於 100 則重設所有資料；否則更新最新資料
         if (formattedData.length >= 100) {
             series.setData(formattedData);
             volumeSeries.setData(volumeData);
