@@ -404,7 +404,7 @@ export default function PriceKLineChart(props) {
             </div>
             <div
                 ref={chartContainerRef}
-                style={{ width: "100%", position: "relative", height: "80%" }}
+                style={{ width: "100%", position: "relative", height: "100%" }}
                 className="border-2 border-gray-400"
             />
         </div>
