@@ -25,7 +25,6 @@ export const GET = async () => {
     const url = `${baseUrl}?endTime=${encodeURIComponent(
         endTime
     )}&startTime=${encodeURIComponent(startTime)}`;
-    console.log(url);
 
     try {
         const response = await axios.get(url);
