@@ -7,6 +7,9 @@ import timezone from "dayjs/plugin/timezone";
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
+// 放在這裡會讓這個路由每次請求都執行，避免使用快取
+export const dynamic = "force-dynamic";
+
 const getFormattedDate = (daysAgo = 0) => {
     // 取得當前時間並設定為多倫多時區
     let now = dayjs().tz("America/Toronto");
